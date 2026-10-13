@@ -1,0 +1,58 @@
+name: Co-authored-by Check
+
+# Warns on the PR when a commit message has a "Co-authored-by:" line, which
+# may mean an AI agent ignored AGENTS.md ("Assisted-by:" is required instead).
+# Never fails the check.
+#
+# pull_request_target gives a write token for fork PRs. This is safe only
+# because the workflow never checks out or runs PR code: it reads commit
+# messages through the API, and passes them along as data only.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+
+jobs:
+  coauthor-check:
+    runs-on: ubuntu-26.04
+    permissions:
+      pull-requests: write
+
+    steps:
+    - name: Check commit messages
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+        PR: ${{ github.event.pull_request.number }}
+      run: |
+        marker='<!-- coauthor-check -->'
+
+        # Short SHAs (GitHub auto-links them) of the offending commits.
+        shas=$(gh api --paginate "repos/$REPO/pulls/$PR/commits" \
+          --jq '.[] | select(.commit.message | test("(^|\\n)[ \\t]*co-authored-by:"; "i")) | .sha[0:9]')
+
+        comment_id=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+          --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"$marker\"))) | .id" | head -n1)
+
+        if [ -z "$shas" ]; then
+          # Clean now: drop an earlier warning, if any.
+          [ -n "$comment_id" ] && gh api -X DELETE "repos/$REPO/issues/comments/$comment_id"
+          exit 0
+        fi
+
+        {
+          echo "$marker"
+          echo "**Warning:** these commits have a \`Co-authored-by:\` line in their message:"
+          echo
+          echo "$shas" | sed 's/^/- /'
+          echo
+          echo "This can (but does not necessarily have to) mean the commit message was written by an AI agent."
+          echo "If so, check that your agent respects \`AGENTS.md\`: AI assistance must be marked with"
+          echo "\`Assisted-by:\`, not \`Co-authored-by:\` (see \`AI_USAGE.md\`)."
+        } > body.md
+
+        if [ -n "$comment_id" ]; then
+          gh api -X PATCH "repos/$REPO/issues/comments/$comment_id" -F body=@body.md
+        else
+          gh pr comment "$PR" --repo "$REPO" --body-file body.md
+        fi
