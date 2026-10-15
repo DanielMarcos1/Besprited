@@ -136,10 +136,8 @@ public:
     {
     case ui::kKeyDownMessage:
     case ui::kKeyUpMessage:
-      args.push_back(static_cast<double>(
-          static_cast<ui::KeyMessage*>(msg)->unicodeChar()));
-      args.push_back(
-          static_cast<double>(static_cast<ui::KeyMessage*>(msg)->scancode()));
+      args.push_back(static_cast<double>(static_cast<ui::KeyMessage*>(msg)->unicodeChar()));
+      args.push_back(static_cast<double>(static_cast<ui::KeyMessage*>(msg)->scancode()));
       break;
 
     case ui::kMouseDownMessage:
@@ -150,16 +148,11 @@ public:
     case ui::kMouseMoveMessage:
     case ui::kSetCursorMessage:
     case ui::kMouseWheelMessage:
-      args.push_back(static_cast<double>(
-          static_cast<ui::MouseMessage*>(msg)->position().x));
-      args.push_back(static_cast<double>(
-          static_cast<ui::MouseMessage*>(msg)->position().y));
-      args.push_back(
-          static_cast<double>(static_cast<ui::MouseMessage*>(msg)->buttons()));
-      args.push_back(static_cast<double>(
-          static_cast<ui::MouseMessage*>(msg)->wheelDelta().x));
-      args.push_back(static_cast<double>(
-          static_cast<ui::MouseMessage*>(msg)->wheelDelta().y));
+      args.push_back(static_cast<double>(static_cast<ui::MouseMessage*>(msg)->position().x));
+      args.push_back(static_cast<double>(static_cast<ui::MouseMessage*>(msg)->position().y));
+      args.push_back(static_cast<double>(static_cast<ui::MouseMessage*>(msg)->buttons()));
+      args.push_back(static_cast<double>(static_cast<ui::MouseMessage*>(msg)->wheelDelta().x));
+      args.push_back(static_cast<double>(static_cast<ui::MouseMessage*>(msg)->wheelDelta().y));
       break;
 
     default:
@@ -300,8 +293,7 @@ void AppScripting::initEngine()
                          {
                            if (args.empty() || !args[0].isFunction())
                              return JSON::Value{JSON::Special::Undefined};
-                           const bool ifEmpty =
-                               args.size() > 1 && args[1].boolean();
+                           const bool ifEmpty = args.size() > 1 && args[1].boolean();
                            if (ifEmpty && !eventHandler.isUndefined())
                              return JSON::Value{JSON::Special::Undefined};
                            eventHandler = args[0];
@@ -319,9 +311,7 @@ void AppScripting::addExtension(Extension& ext)
     engine->addAPIFunction(name, func);
   for (auto& [className, clazz] : ext.getClasses())
   {
-    auto& cls =
-        engine->addClass(className, clazz->getBaseType(),
-                         clazz->getDerivedType(), clazz->getConstructor());
+    auto& cls = engine->addClass(className, clazz->getBaseType(), clazz->getDerivedType(), clazz->getConstructor());
     for (auto& [name, method] : clazz->getMethods())
     {
       cls.addMethod(name, method);
@@ -340,8 +330,8 @@ void AppScripting::addExtension(Extension& ext)
     }
     catch (const std::exception& e)
     {
-      std::cerr << "Warning: Failed to run boot script for extension "
-                << typeid(ext).name() << ": " << e.what() << '\n';
+      std::cerr << "Warning: Failed to run boot script for extension " << typeid(ext).name() << ": " << e.what()
+                << '\n';
     }
   }
 }
@@ -367,8 +357,7 @@ void AppScripting::drainEventQueue()
     // Lazily load the script that owns this event (first-event load for
     // ///listen scripts). Re-queue the event so the "init" event fired
     // by evalFile is delivered before it (legacy load-then-fire order).
-    if (!ev.fileName.empty() &&
-        loadedScripts.find(ev.fileName) == loadedScripts.end())
+    if (!ev.fileName.empty() && loadedScripts.find(ev.fileName) == loadedScripts.end())
     {
       if (evalFile(ev.fileName))
       {
@@ -418,8 +407,7 @@ bool AppScripting::eval(const std::string& code, const std::string& path)
     // REPL lines eval as scripts: top-level `var` persists across lines
     // (matching the legacy REPL), and the last expression's completion
     // value is returned.
-    JSON::Value result =
-        engine->eval(code, path, Interpreter::EvalType::Script);
+    JSON::Value result = engine->eval(code, path, Interpreter::EvalType::Script);
     if (printLastResultFlag && !result.isUndefined())
       routeToConsole(formatReplValue(result));
     flushAfterEval();
@@ -444,8 +432,7 @@ bool AppScripting::evalFile(const std::string& fileName)
     std::cout << "Could not open " << fileName << '\n';
     return false;
   }
-  auto source = std::string{std::istreambuf_iterator<char>(ifs),
-                            std::istreambuf_iterator<char>()};
+  auto source = std::string{std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>()};
 
   // Backward-compat epilogue: a legacy `function onEvent` becomes the
   // event handler unless the script already called setEventHandler.
