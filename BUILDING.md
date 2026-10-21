@@ -65,9 +65,9 @@ Arch Linux:
 
 ### Windows dependencies
 
-To install the required dependencies with msys2, run the following in mingw32:
+To install the required dependencies with msys2, run the following in the MSYS2 UCRT64 shell:
 
-    pacman -S base-devel mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-make mingw-w64-i686-curl mingw-w64-i686-freetype mingw-w64-i686-giflib mingw-w64-i686-libjpeg-turbo mingw-w64-i686-libpng mingw-w64-i686-libwebp mingw-w64-i686-pixman mingw-w64-i686-sdl3 mingw-w64-i686-sdl3-image mingw-w64-i686-tinyxml2 mingw-w64-i686-zlib mingw-w64-i686-libarchive
+    pacman -S base-devel mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-make mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-nodejs mingw-w64-ucrt-x86_64-curl mingw-w64-ucrt-x86_64-freetype mingw-w64-ucrt-x86_64-giflib mingw-w64-ucrt-x86_64-libjpeg-turbo mingw-w64-ucrt-x86_64-libpng mingw-w64-ucrt-x86_64-libwebp mingw-w64-ucrt-x86_64-pixman mingw-w64-ucrt-x86_64-sdl3 mingw-w64-ucrt-x86_64-sdl3-image mingw-w64-ucrt-x86_64-tinyxml2 mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-libarchive
 
 ### MacOS dependencies
 
@@ -99,7 +99,7 @@ To compile Besprited, run the following commands:
 
 ### Windows details
 
-Run the following in mingw32.exe:
+Run the following in the MSYS2 UCRT64 shell:
 
     cmake -G Ninja ..
 
@@ -216,4 +216,4 @@ Requires: GCC 10 or higher (which includes the `-fanalyzer` feature).
 
 **Windows (MSYS2):**
 
-    pacman -S mingw-w64-i686-cppcheck mingw-w64-i686-clang-tools-extra mingw-w64-i686-gcc
+    pacman -S mingw-w64-ucrt-x86_64-cppcheck mingw-w64-ucrt-x86_64-clang-tools-extra mingw-w64-ucrt-x86_64-gcc
