@@ -167,12 +167,13 @@ TEST(Diagonal45Symmetry, ReflectsAcrossTheSlopeMinusOneDiagonal)
   Diagonal45Symmetry axis(10, 10);
 
   Strokes out;
-  // A point directly "east" of the center reflects to directly "north".
+  // A point directly "east" of the center reflects to "north", shifted one
+  // pixel by the odd-brush adjustment (10 - 0 - 1, 10 - 4 - 1).
   axis.generateStrokes(onePoint(14, 10, 0.f), out, &loop);
 
   ASSERT_EQ(2u, out.size());
-  EXPECT_EQ(10, out[1][0].x);
-  EXPECT_EQ(6, out[1][0].y);
+  EXPECT_EQ(9, out[1][0].x);
+  EXPECT_EQ(5, out[1][0].y);
 }
 
 TEST(Diagonal135Symmetry, ReflectsAcrossTheSlopePlusOneDiagonal)
@@ -216,23 +217,20 @@ TEST(Rotational90Symmetry, ProducesFourStrokesEachRotated90DegreesFromThePreviou
   ASSERT_EQ(4u, out.size());
   EXPECT_EQ(14, out[0][0].x);
   EXPECT_EQ(10, out[0][0].y);
-  // (dx,dy)=(4,0) -> (-0,4) -> point (10,14)
-  EXPECT_EQ(10, out[1][0].x);
+  // Odd brush: rotation is about (m - 0.5, m - 0.5), i.e. (x,y) -> (2m - 1 - y, x).
+  EXPECT_EQ(9, out[1][0].x);
   EXPECT_EQ(14, out[1][0].y);
-  // -> (-4,0) -> point (6,10)
-  EXPECT_EQ(6, out[2][0].x);
-  EXPECT_EQ(10, out[2][0].y);
-  // -> (0,-4) -> point (10,6)
+  EXPECT_EQ(5, out[2][0].x);
+  EXPECT_EQ(9, out[2][0].y);
   EXPECT_EQ(10, out[3][0].x);
-  EXPECT_EQ(6, out[3][0].y);
+  EXPECT_EQ(5, out[3][0].y);
 
   for (auto& stroke : out)
     EXPECT_FLOAT_EQ(0.75f, stroke[0].pressure);
 
   // A 4th application returns to the starting point (full turn).
-  int dx = out[3][0].x - 10, dy = out[3][0].y - 10;
-  EXPECT_EQ(14 - 10, -dy);
-  EXPECT_EQ(10 - 10, dx);
+  EXPECT_EQ(14, 2 * 10 - 1 - out[3][0].y);
+  EXPECT_EQ(10, out[3][0].x);
 }
 
 TEST(CompositeSymmetry, SingleAxisMatchesTheDedicatedSymmetryClass)
@@ -275,7 +273,7 @@ TEST(CompositeSymmetry, CombiningTwoAxesYieldsFourStrokesWithNoDuplicates)
   EXPECT_EQ(4u, uniquePoints.size());
 }
 
-TEST(CompositeSymmetry, CombiningAllFourAxesYieldsSixteenStrokesWithNoDuplicates)
+TEST(CompositeSymmetry, CombiningAllFourAxesYieldsSixteenStrokesOnEightDistinctPixels)
 {
   Brush brush(doc::kCircleBrushType, 5, 0);
   FakeToolLoop loop{brush};
@@ -284,8 +282,8 @@ TEST(CompositeSymmetry, CombiningAllFourAxesYieldsSixteenStrokesWithNoDuplicates
               (int)app::gen::SymmetryMode::DIAGONAL_45 | (int)app::gen::SymmetryMode::DIAGONAL_135;
   CompositeSymmetry composite(flags, 10, 10);
 
-  // An asymmetric starting point (not on any axis) so all 16 combinations
-  // land on distinct pixels.
+  // The four axes now share one center, so they generate the 8-element
+  // dihedral group; the 16 strokes cover each of its images twice.
   Strokes out;
   composite.generateStrokes(onePoint(17, 4, 0.25f), out, &loop);
 
@@ -297,7 +295,7 @@ TEST(CompositeSymmetry, CombiningAllFourAxesYieldsSixteenStrokesWithNoDuplicates
     uniquePoints.insert({stroke[0].x, stroke[0].y});
     EXPECT_FLOAT_EQ(0.25f, stroke[0].pressure);
   }
-  EXPECT_EQ(16u, uniquePoints.size());
+  EXPECT_EQ(8u, uniquePoints.size());
 }
 
 TEST(CompositeSymmetry, NoFlagsLeavesOnlyTheOriginalStroke)

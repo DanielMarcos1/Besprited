@@ -12,17 +12,33 @@
 #include "doc/doc.h"
 #include "doc/image_traits.h"
 #include "she/system.h"
+#include "zlib.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 using namespace app;
 
 namespace
 {
+
+class ScopedTestFile
+{
+public:
+  explicit ScopedTestFile(const char* filename)
+    : m_filename(filename)
+  {
+  }
+  ~ScopedTestFile() { std::remove(m_filename); }
+
+private:
+  const char* m_filename;
+};
 
 void putU16LE(std::vector<uint8_t>& buf, std::size_t offset, uint16_t v)
 {
@@ -112,6 +128,7 @@ TEST(AseFormat, ColorProfileChunkIsToleratedNotTreatedAsAnUnsupportedChunkWarnin
 
   doc::Document* doc = ctx.documents().add(w, h, doc::ColorMode::RGB);
   doc->setFilename("ase_color_profile_test.ase");
+  ScopedTestFile cleanup("ase_color_profile_test.ase");
   Layer* layer = doc->sprite()->folder()->getFirstLayer();
   ASSERT_TRUE(layer != nullptr);
   Image* image = layer->cel(frame_t(0))->image();
@@ -188,6 +205,7 @@ TEST(AseFormat, AnActuallyUnrecognizedChunkTypeIsNotSilentlyTolerated)
   app::Context ctx;
   doc::Document* doc = ctx.documents().add(2, 2, doc::ColorMode::RGB);
   doc->setFilename("ase_unknown_chunk_test.ase");
+  ScopedTestFile cleanup("ase_unknown_chunk_test.ase");
   Layer* layer = doc->sprite()->folder()->getFirstLayer();
   Image* image = layer->cel(frame_t(0))->image();
   put_pixel(image, 0, 0, doc::rgba(1, 2, 3, 255));
@@ -265,6 +283,7 @@ TEST(AseFormat, ModeratelyLargeImageRoundTripsWithoutCorruption)
 
   doc::Document* doc = ctx.documents().add(w, h, doc::ColorMode::INDEXED, 4);
   doc->setFilename("ase_large_image_test.ase");
+  ScopedTestFile cleanup("ase_large_image_test.ase");
   Layer* layer = doc->sprite()->folder()->getFirstLayer();
   ASSERT_TRUE(layer != nullptr);
   Image* image = layer->cel(frame_t(0))->image();
@@ -307,6 +326,7 @@ TEST(AseFormat, LayerGroupsAreFlattenedToTopLevelLayersOnLoad)
   app::Context ctx;
   doc::Document* doc = ctx.documents().add(1, 1, doc::ColorMode::RGB);
   doc->setFilename("ase_layer_groups_test.ase");
+  ScopedTestFile cleanup("ase_layer_groups_test.ase");
 
   doc::Sprite* sprite = doc->sprite();
   doc::LayerFolder* root = sprite->folder();
@@ -375,6 +395,7 @@ TEST(AseFormat, FileWithoutGroupsIsUntouchedByFlattening)
   app::Context ctx;
   doc::Document* doc = ctx.documents().add(1, 1, doc::ColorMode::RGB);
   doc->setFilename("ase_no_groups_test.ase");
+  ScopedTestFile cleanup("ase_no_groups_test.ase");
 
   doc::Sprite* sprite = doc->sprite();
   doc::LayerFolder* root = sprite->folder();
@@ -419,6 +440,7 @@ TEST(AseFormat, DeeplyNestedGroupDropIsReparentedToRootNotCrashing)
   app::Context ctx;
   doc::Document* doc = ctx.documents().add(1, 1, doc::ColorMode::RGB);
   doc->setFilename("ase_deep_nested_groups_test.ase");
+  ScopedTestFile cleanup("ase_deep_nested_groups_test.ase");
 
   doc::Sprite* sprite = doc->sprite();
   doc::LayerFolder* root = sprite->folder();
@@ -481,6 +503,7 @@ TEST_P(AseChunkCount, LoadsTheLastCel)
   std::unique_ptr<she::System> sys(she::create_system());
   app::Context ctx;
   const char* filename = "ase_chunk_count_test.ase";
+  ScopedTestFile cleanup(filename);
   auto* document = ctx.documents().add(1, 1, doc::ColorMode::RGB);
   document->setFilename(filename);
   document->sprite()->setFrameDuration(doc::frame_t(0), 123);
@@ -497,6 +520,7 @@ TEST_P(AseChunkCount, LoadsTheLastCel)
   const auto param = GetParam();
   const uint32_t count = param.chunks ? param.chunks : originalCount;
   ASSERT_GE(count, originalCount);
+  ASSERT_GT(count, 0u);
 
   // Insert valid, ignored path chunks before the saved chunks. The cel
   // stays last, so a truncated count cannot accidentally pass this test.
@@ -525,7 +549,6 @@ TEST_P(AseChunkCount, LoadsTheLastCel)
   EXPECT_EQ(color, doc::get_pixel(cel->image(), 0, 0));
   loaded->close();
   delete loaded;
-  std::remove(filename);
 }
 
 INSTANTIATE_TEST_SUITE_P(FrameHeader, AseChunkCount,
@@ -534,8 +557,10 @@ INSTANTIATE_TEST_SUITE_P(FrameHeader, AseChunkCount,
 
 TEST(AseFormat, WritesExtendedChunkCountAboveWordLimit)
 {
+  std::unique_ptr<she::System> sys(she::create_system());
   app::Context ctx;
   const char* filename = "ase_extended_write_test.ase";
+  ScopedTestFile cleanup(filename);
   auto* document = ctx.documents().add(1, 1, doc::ColorMode::RGB);
   document->setFilename(filename);
   auto* sprite = document->sprite();
@@ -572,5 +597,396 @@ TEST(AseFormat, WritesExtendedChunkCountAboveWordLimit)
   EXPECT_EQ(0xffff, getU16LE(bytes, 134));
   EXPECT_EQ(0, getU16LE(bytes, 138));
   EXPECT_EQ(count, getU32LE(bytes, 140));
-  std::remove(filename);
+
+  auto* loaded = load_document(&ctx, filename);
+  ASSERT_NE(nullptr, loaded);
+  EXPECT_EQ(32768, loaded->sprite()->folder()->getLayersCount());
+  unsigned cels = 0;
+  for (auto* layer : loaded->sprite()->folder()->getLayersList())
+    if (layer->cel(doc::frame_t(0)))
+      ++cels;
+  EXPECT_EQ(1u, cels);
+  loaded->close();
+  delete loaded;
+}
+
+namespace
+{
+
+class AseMalformedFrame : public ::testing::TestWithParam<int>
+{
+};
+
+} // namespace
+
+TEST_P(AseMalformedFrame, RejectsInvalidFrameWithoutLooping)
+{
+  std::unique_ptr<she::System> sys(she::create_system());
+  app::Context ctx;
+  const char* filename = "ase_malformed_frame_test.ase";
+  ScopedTestFile cleanup(filename);
+  auto* document = ctx.documents().add(1, 1, doc::ColorMode::RGB);
+  document->setFilename(filename);
+  ASSERT_EQ(0, save_document(&ctx, document));
+  document->close();
+  delete document;
+  auto bytes = readWholeFile(filename);
+  ASSERT_GE(bytes.size(), 150u);
+  switch (GetParam())
+  {
+  case 0:
+    putU16LE(bytes, 134, 0xffff);
+    putU32LE(bytes, 140, 0xffffffff);
+    break;
+  case 1:
+    bytes.resize(143); // Last byte of the extended count is missing.
+    break;
+  case 2:
+    putU32LE(bytes, 144, 5); // Chunk header itself needs six bytes.
+    break;
+  case 3:
+    putU32LE(bytes, 144, 0); // Must never seek backwards/repeat a chunk.
+    break;
+  case 4:
+    putU32LE(bytes, 144, 0xffffffff); // Chunk exceeds the frame.
+    break;
+  case 5:
+    bytes.pop_back(); // Frame payload is physically incomplete.
+    break;
+  case 6:
+    putU32LE(bytes, 128, 15); // Guard frame-size subtraction.
+    break;
+  case 7:
+    putU32LE(bytes, 128, 22); // Cannot consume bytes beyond the frame.
+    putU16LE(bytes, 134, 1);
+    break;
+  case 8:
+    putU32LE(bytes, 144, 6);
+    putU16LE(bytes, 148, 0x2007); // Color profile payload is missing.
+    break;
+  }
+  if (GetParam() >= 9)
+  {
+    // A complete frame containing an incomplete tag chunk.
+    const unsigned payloadSize = GetParam() == 9 ? 0 : (GetParam() == 10 ? 10 : 29);
+    bytes.resize(150 + payloadSize, 0);
+    std::fill(bytes.begin() + 144, bytes.end(), 0);
+    putU32LE(bytes, 0, bytes.size());
+    putU32LE(bytes, 128, bytes.size() - 128);
+    putU16LE(bytes, 134, 1);
+    putU32LE(bytes, 140, 0);
+    putU32LE(bytes, 144, 6 + payloadSize);
+    putU16LE(bytes, 148, 0x2018);
+    if (GetParam() == 10)
+      putU16LE(bytes, 150, 0xffff); // Count cannot fit in this chunk.
+    if (GetParam() == 11)
+    {
+      putU16LE(bytes, 150, 1);
+      putU16LE(bytes, 177, 1); // Name extends beyond the chunk.
+    }
+  }
+  writeWholeFile(filename, bytes);
+  std::unique_ptr<FileOp> operation(FileOp::createLoadDocumentOperation(&ctx, filename, FILE_LOAD_SEQUENCE_NONE));
+  ASSERT_NE(nullptr, operation);
+  operation->operate();
+  operation->done();
+  EXPECT_TRUE(operation->hasError());
+  EXPECT_LT(operation->error().size(), 4096u);
+  std::unique_ptr<app::Document> unexpectedDocument(operation->document());
+  EXPECT_EQ(nullptr, unexpectedDocument);
+}
+
+INSTANTIATE_TEST_SUITE_P(FrameBounds, AseMalformedFrame, ::testing::Range(0, 12));
+
+TEST(AseFormat, RepeatedUnknownChunksHaveBoundedDiagnostics)
+{
+  std::unique_ptr<she::System> sys(she::create_system());
+  app::Context ctx;
+  const char* filename = "ase_unknown_repeated_test.ase";
+  ScopedTestFile cleanup(filename);
+  auto* document = ctx.documents().add(1, 1, doc::ColorMode::RGB);
+  document->setFilename(filename);
+  ASSERT_EQ(0, save_document(&ctx, document));
+  document->close();
+  delete document;
+  auto bytes = readWholeFile(filename);
+  ASSERT_GE(bytes.size(), 144u);
+  constexpr unsigned count = 10000;
+  bytes.resize(144 + count * 6, 0);
+  putU32LE(bytes, 0, bytes.size());
+  putU32LE(bytes, 128, bytes.size() - 128);
+  putU16LE(bytes, 134, count);
+  putU32LE(bytes, 140, 0);
+  for (unsigned offset = 144; offset < bytes.size(); offset += 6)
+  {
+    putU32LE(bytes, offset, 6);
+    putU16LE(bytes, offset + 4, 0xffff);
+  }
+  writeWholeFile(filename, bytes);
+  std::unique_ptr<FileOp> operation(FileOp::createLoadDocumentOperation(&ctx, filename, FILE_LOAD_SEQUENCE_NONE));
+  ASSERT_NE(nullptr, operation);
+  operation->operate();
+  operation->done();
+  EXPECT_TRUE(operation->hasError());
+  EXPECT_LT(operation->error().size(), 4096u);
+  ASSERT_NE(nullptr, operation->document()); // Unknown chunks remain skippable.
+  operation->document()->close();
+  delete operation->document();
+}
+
+TEST(AseFormat, FrameTagsRoundTripWithNames)
+{
+  std::unique_ptr<she::System> sys(she::create_system());
+  app::Context ctx;
+  const char* filename = "ase_tags_roundtrip_test.ase";
+  ScopedTestFile cleanup(filename);
+  auto* document = ctx.documents().add(1, 1, doc::ColorMode::RGB);
+  document->setFilename(filename);
+  auto tag = std::make_unique<doc::FrameTag>(doc::frame_t(0), doc::frame_t(0));
+  tag->setName("walk");
+  document->sprite()->frameTags().add(tag.get());
+  tag.release();
+  ASSERT_EQ(0, save_document(&ctx, document));
+  document->close();
+  delete document;
+  auto* loaded = load_document(&ctx, filename);
+  ASSERT_NE(nullptr, loaded);
+  EXPECT_EQ(1u, loaded->sprite()->frameTags().size());
+  EXPECT_NE(nullptr, loaded->sprite()->frameTags().getByName("walk"));
+  loaded->close();
+  delete loaded;
+}
+
+namespace
+{
+
+class AsePixelPayload : public ::testing::Test
+{
+protected:
+  std::unique_ptr<she::System> sys{she::create_system()};
+  app::Context ctx;
+  const char* filename = "ase_pixel_payload_test.ase";
+  ScopedTestFile cleanup{filename};
+  std::vector<uint8_t> bytes;
+  size_t celOffset = 0;
+
+  void makeFile(doc::ColorMode mode = doc::ColorMode::RGB)
+  {
+    auto* document = ctx.documents().add(2, 2, mode);
+    document->setFilename(filename);
+    ASSERT_EQ(0, save_document(&ctx, document));
+    document->close();
+    delete document;
+    bytes = readWholeFile(filename);
+    ASSERT_GE(bytes.size(), 144u);
+    for (size_t offset = 144; offset < bytes.size();)
+    {
+      ASSERT_GE(bytes.size() - offset, 6u);
+      const size_t size = getU32LE(bytes, offset);
+      ASSERT_GE(size, 6u);
+      ASSERT_LE(size, bytes.size() - offset);
+      if (getU16LE(bytes, offset + 4) == 0x2005)
+      {
+        ASSERT_GE(size, 26u);
+        ASSERT_EQ(bytes.size(), offset + size);
+        celOffset = offset;
+        return;
+      }
+      offset += size;
+    }
+    FAIL() << "Saved cel not found";
+  }
+
+  void setPixels(const std::vector<uint8_t>& payload, bool compressed)
+  {
+    bytes.resize(celOffset + 26);
+    bytes.insert(bytes.end(), payload.begin(), payload.end());
+    putU16LE(bytes, celOffset + 13, compressed ? 2 : 0);
+    putU32LE(bytes, celOffset, static_cast<uint32_t>(26 + payload.size()));
+    putU32LE(bytes, 0, static_cast<uint32_t>(bytes.size()));
+    putU32LE(bytes, 128, static_cast<uint32_t>(bytes.size() - 128));
+  }
+
+  void expectRejected(const char* reason = "Error reading ASE chunk")
+  {
+    writeWholeFile(filename, bytes);
+    std::unique_ptr<FileOp> operation(FileOp::createLoadDocumentOperation(&ctx, filename, FILE_LOAD_SEQUENCE_NONE));
+    ASSERT_NE(nullptr, operation);
+    operation->operate();
+    operation->done();
+    std::unique_ptr<app::Document> unexpectedDocument(operation->document());
+    EXPECT_EQ(nullptr, unexpectedDocument);
+    EXPECT_TRUE(operation->hasError());
+    EXPECT_LT(operation->error().size(), 4096u);
+    EXPECT_NE(std::string::npos, operation->error().find(reason));
+  }
+};
+
+std::vector<uint8_t> compressPixels(const std::vector<uint8_t>& pixels)
+{
+  uLongf size = compressBound(pixels.size());
+  std::vector<uint8_t> result(size);
+  if (compress2(result.data(), &size, pixels.data(), pixels.size(), Z_DEFAULT_COMPRESSION) != Z_OK)
+    throw std::runtime_error("Cannot prepare compressed pixel test");
+  result.resize(size);
+  return result;
+}
+
+class AseValidPixels : public AsePixelPayload,
+                       public ::testing::WithParamInterface<int>
+{
+};
+class AseInvalidPixels : public AsePixelPayload,
+                         public ::testing::WithParamInterface<int>
+{
+};
+
+} // namespace
+
+TEST_P(AseValidPixels, LoadsExactPixelBytes)
+{
+  const int format = GetParam() % 3;
+  const bool compressed = GetParam() >= 3;
+  const doc::ColorMode mode =
+      format == 0 ? doc::ColorMode::RGB : (format == 1 ? doc::ColorMode::GRAYSCALE : doc::ColorMode::INDEXED);
+  ASSERT_NO_FATAL_FAILURE(makeFile(mode));
+  const size_t stride = format == 0 ? 4 : (format == 1 ? 2 : 1);
+  std::vector<uint8_t> pixels(4 * stride);
+  for (size_t i = 0; i < pixels.size(); ++i)
+    pixels[i] = static_cast<uint8_t>(i + 1);
+  setPixels(compressed ? compressPixels(pixels) : pixels, compressed);
+  writeWholeFile(filename, bytes);
+  std::unique_ptr<app::Document> loaded(load_document(&ctx, filename));
+  ASSERT_NE(nullptr, loaded);
+  const auto cel = loaded->sprite()->folder()->getFirstLayer()->cel(doc::frame_t(0));
+  ASSERT_NE(nullptr, cel);
+  for (int i = 0; i < 4; ++i)
+  {
+    const auto* p = &pixels[i * stride];
+    const doc::color_t expected =
+        format == 0 ? doc::rgba(p[0], p[1], p[2], p[3]) : (format == 1 ? doc::graya(p[0], p[1]) : p[0]);
+    EXPECT_EQ(expected, doc::get_pixel(cel->image(), i % 2, i / 2));
+  }
+  loaded->close();
+}
+
+INSTANTIATE_TEST_SUITE_P(PixelFormats, AseValidPixels, ::testing::Range(0, 6));
+
+TEST_P(AseInvalidPixels, RejectsBeforePublishingPartialImage)
+{
+  ASSERT_NO_FATAL_FAILURE(makeFile());
+  std::vector<uint8_t> pixels(16, 42);
+  bool compressed = GetParam() >= 3;
+  if (GetParam() == 0 || GetParam() == 6)
+    pixels.pop_back();
+  if (GetParam() == 7)
+    pixels.push_back(42);
+  auto payload = compressed ? compressPixels(pixels) : pixels;
+  if (GetParam() == 3)
+    payload.clear();
+  if (GetParam() == 4)
+    payload.pop_back(); // Missing zlib trailer, despite enough decoded pixels.
+  if (GetParam() == 5)
+    payload.back() ^= 1; // Invalid checksum.
+  setPixels(payload, compressed);
+  if (GetParam() == 1)
+  {
+    putU16LE(bytes, celOffset + 22, 16384);
+    putU16LE(bytes, celOffset + 24, 16384); // 1 GiB claimed by a tiny raw chunk.
+  }
+  if (GetParam() == 2)
+    putU32LE(bytes, celOffset, 6); // Physical bytes remain outside this chunk.
+  expectRejected(GetParam() == 1 ? "ASE chunk payload is truncated" : "Error reading ASE chunk");
+}
+
+INSTANTIATE_TEST_SUITE_P(PixelBounds, AseInvalidPixels, ::testing::Range(0, 8));
+
+namespace
+{
+class AseChunkPayload : public AsePixelPayload,
+                        public ::testing::WithParamInterface<int>
+{
+};
+} // namespace
+
+TEST_P(AseChunkPayload, ChecksMetadataAndMaskPayloadBounds)
+{
+  ASSERT_NO_FATAL_FAILURE(makeFile());
+  const uint16_t types[] = {4, 11, 0x2004, 0x2020, 0x2019, 0x2016, 0x2016, 0x2018, 0x2007, 0x2005, 11, 11};
+  const unsigned sizes[] = {0, 0, 18, 6, 20, 18, 19, 10, 15, 16, 7, 7};
+  const int index = GetParam();
+  std::vector<uint8_t> chunk(6 + sizes[index], 0);
+  putU32LE(chunk, 0, static_cast<uint32_t>(chunk.size()));
+  putU16LE(chunk, 4, types[index]);
+  if (index == 2)
+    putU16LE(chunk, 22, 1); // Layer name is missing.
+  if (index == 3)
+  {
+    putU32LE(chunk, 6, 1);       // User text flag.
+    putU16LE(chunk, 10, 0xffff); // Text cannot fit.
+  }
+  if (index == 4)
+    putU32LE(chunk, 6, 2); // Palette has no bytes for its first entry.
+  if (index == 5 || index == 6)
+  {
+    putU16LE(chunk, 10, index == 5 ? 16384 : 1);
+    putU16LE(chunk, 12, index == 5 ? 16384 : 1);
+    if (index == 6)
+      chunk.back() = 0x80; // One bit-wide mask, padded to a byte.
+  }
+  if (index == 9)
+    putU16LE(chunk, 13, 1); // Linked cel has no link-frame WORD.
+  if (index >= 10)
+  {
+    putU16LE(chunk, 6, 1);             // One legacy palette packet.
+    chunk[9] = 1;                      // One color.
+    chunk[10] = index == 10 ? 64 : 63; // Six-bit lookup boundary.
+  }
+  const uint16_t count = getU16LE(bytes, 134);
+  bytes.insert(index >= 10 ? bytes.begin() + 144 : bytes.end(), chunk.begin(), chunk.end());
+  putU16LE(bytes, 134, count + 1);
+  putU32LE(bytes, 0, static_cast<uint32_t>(bytes.size()));
+  putU32LE(bytes, 128, static_cast<uint32_t>(bytes.size() - 128));
+  if (index == 6 || index == 7 || index == 11)
+  {
+    writeWholeFile(filename, bytes);
+    std::unique_ptr<app::Document> loaded(load_document(&ctx, filename));
+    ASSERT_NE(nullptr, loaded);
+    loaded->close();
+  }
+  else
+    expectRejected();
+}
+
+INSTANTIATE_TEST_SUITE_P(ChunkPayloads, AseChunkPayload, ::testing::Range(0, 12));
+
+TEST_F(AsePixelPayload, StreamsCompressedPixelsAcrossInputBlocks)
+{
+  ASSERT_NO_FATAL_FAILURE(makeFile());
+  std::vector<uint8_t> pixels(64 * 64 * 4);
+  uint32_t state = 123;
+  for (auto& byte : pixels)
+  {
+    state = state * 1664525u + 1013904223u;
+    byte = static_cast<uint8_t>(state >> 24);
+  }
+  const auto compressed = compressPixels(pixels);
+  ASSERT_GT(compressed.size(), 4096u);
+  setPixels(compressed, true);
+  putU16LE(bytes, 8, 64);
+  putU16LE(bytes, 10, 64);
+  putU16LE(bytes, celOffset + 22, 64);
+  putU16LE(bytes, celOffset + 24, 64);
+  writeWholeFile(filename, bytes);
+  std::unique_ptr<app::Document> loaded(load_document(&ctx, filename));
+  ASSERT_NE(nullptr, loaded);
+  const auto cel = loaded->sprite()->folder()->getFirstLayer()->cel(doc::frame_t(0));
+  ASSERT_NE(nullptr, cel);
+  for (int y = 0; y < 64; ++y)
+    for (int x = 0; x < 64; ++x)
+    {
+      const auto* p = &pixels[4 * (y * 64 + x)];
+      EXPECT_EQ(doc::rgba(p[0], p[1], p[2], p[3]), doc::get_pixel(cel->image(), x, y));
+    }
+  loaded->close();
 }
